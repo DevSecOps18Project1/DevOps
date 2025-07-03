@@ -1,0 +1,37 @@
+pipeline{
+    agent any
+    environment {
+        DOCKER_IMAGE = 'yakinew/inventory-app'
+        DOCKER_TAG = "${BUILD_NUMBER}"
+        GIT_REPO = 'https://github.com/DevSecOps18Project1/microservices.git'
+    }
+    stages{
+        stage("Cloning the microservices"){
+            steps{
+                echo "Cloning the microservices"
+                git branch: 'main', url: "${GIT_REPO}"
+            }
+        }
+        stage("build docker image"){
+            steps{
+                echo "build docker image"
+                sh "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} ./backend/"
+            }
+        }
+        stage("test application"){
+            steps{
+                echo "run pytest (how to do that???)"
+            }
+            post{
+                always{
+                    echo "testing: done"
+                }
+            }
+        }
+        stage("push new image"){
+            steps{
+                echo "push new image"
+            }
+        }
+    }
+}
