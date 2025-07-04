@@ -1,36 +1,76 @@
-pipeline{
+pipeline {
     agent any
     environment {
         DOCKER_IMAGE = 'yakinew/inventory-app'
-        DOCKER_TAG = "${BUILD_NUMBER}"
+        DOCKER_TAG = 'latest'
+        DOCKER_BUILD_TAG = "1.0.${BUILD_NUMBER}"
         GIT_REPO = 'https://github.com/DevSecOps18Project1/microservices.git'
     }
     stages{
-        stage("Cloning the microservices"){
+        stage("Cloning microservices") {
             steps{
                 echo "Cloning the microservices"
                 git branch: 'main', url: "${GIT_REPO}"
             }
         }
-        stage("build docker image"){
+        stage("Build Docker Image") {
             steps{
                 echo "build docker image"
                 sh "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} ./backend/"
             }
         }
-        stage("test application"){
+        stage("Test Application") {
             steps{
+                sh "docker run -d -p 8085:8085 --name inventory_app ${DOCKER_IMAGE}:${DOCKER_TAG}"
                 echo "run pytest (how to do that???)"
             }
             post{
-                always{
+                always {
                     echo "testing: done"
+                    sh 'docker rm -f inventory_app'
                 }
             }
         }
-        stage("push new image"){
-            steps{
-                echo "push new image"
+
+        stage("Push Image to Docker Hub") {
+            steps {
+                script {
+                    // Step 1: Login to Docker Hub
+                    stage("Docker Login") {
+                        withCredentials([usernamePassword(credentialsId: 'yakinew-docker-login',
+                            usernameVariable: 'DOCKER_USERNAME',
+                            passwordVariable: 'DOCKER_TOKEN')]) {
+                            sh '''
+                                echo "Logging into Docker Hub..."
+                                echo $DOCKER_TOKEN | docker login -u $DOCKER_USERNAME --password-stdin
+                            '''
+                        }
+                        echo "Successfully logged into Docker Hub"
+                    }
+
+                    stage("Ensure Docker Buildx") {
+                        // Step 1: Ensure Docker Buildx Builder is set up
+                        sh '''
+                            docker buildx create --name mybuilder --use || docker buildx use mybuilder
+                            docker buildx inspect --bootstrap
+                        '''
+                        echo "Docker Buildx builder ready."
+                    }
+
+                    stage("Build multi-arch image") {
+                        // Step 2: Build the multi-architecture image
+                        sh '''
+                            echo "Building multi-architecture image: ${DOCKER_IMAGE}:${DOCKER_BUILD_TAG} for linux/amd64,linux/arm64/v8"
+                            docker buildx build \\
+                                --platform linux/amd64,linux/arm64/v8 \\
+                                -t ${DOCKER_IMAGE}:${DOCKER_BUILD_TAG} \\
+                                -t ${DOCKER_IMAGE}:${DOCKER_TAG} \\
+                                --push \\
+                                ./backend/
+                        '''
+                        echo "Successfully built and pushed multi-architecture image."
+                    }
+                }
             }
         }
     }
