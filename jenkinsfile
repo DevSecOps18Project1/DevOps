@@ -1,33 +1,169 @@
 pipeline {
     agent any
+
     environment {
-        DOCKER_IMAGE = 'yakinew/inventory-app'
-        DOCKER_TAG = 'latest'
-        DOCKER_BUILD_TAG = "1.0.${BUILD_NUMBER}"
+        DOCKER_NETWORK = "my-shared-network"
+
+        APP_IMAGE_NAME = "yakinew/inventory-app"
+        APP_IMAGE_TAG = "latest"
+        APP_IMAGE_BUILD_TAG = "1.0.${BUILD_NUMBER}"
+        APP_CONTAINER_NAME = "inventory-app"
+        APP_PORT = "8085"
+
+        DB_IMAGE_NAME = "postgres:16-alpine"
+        DB_CONTAINER_NAME = "inventory-db"
+        DB_HOST = "${DB_CONTAINER_NAME}"
+        DB_PORT = "5432"
+        DB_USER = "your_username"
+        DB_PASSWORD = "your_password"
+        DB_NAME = "your_database"
+
+        TEST_IMAGE_NAME = "yakinew/inventory-test"
+        TEST_IMAGE_TAG = "latest"
+        TEST_CONTAINER_NAME = "inventory-test"
+        TEST_BASE_URL = "http://${APP_CONTAINER_NAME}:${APP_PORT}"
+
         GIT_REPO = 'https://github.com/DevSecOps18Project1/microservices.git'
     }
-    stages{
-        stage("Cloning microservices") {
-            steps{
+
+    stages {
+        stage('Cleanup Previous Runs') {
+            steps {
+                script {
+                    echo "Stopping and removing existing containers and network..."
+                    sh "docker stop ${TEST_CONTAINER_NAME} || true"
+                    sh "docker rm -f ${TEST_CONTAINER_NAME} || true"
+                    sh "docker stop ${APP_CONTAINER_NAME} || true"
+                    sh "docker rm -f ${APP_CONTAINER_NAME} || true"
+                    sh "docker stop ${DB_CONTAINER_NAME} || true"
+                    sh "docker rm -f ${DB_CONTAINER_NAME} || true"
+                    sh "docker network rm -f ${DOCKER_NETWORK} || true"
+                    echo "Cleanup complete."
+                }
+            }
+        }
+
+        stage('Checkout SCM') {
+            steps {
                 echo "Cloning the microservices"
                 git branch: 'main', url: "${GIT_REPO}"
             }
         }
-        stage("Build Docker Image") {
-            steps{
-                echo "build docker image"
-                sh "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} ./backend/"
+
+        stage('Create Docker Network') {
+            steps {
+                script {
+                    echo "Creating Docker network: ${DOCKER_NETWORK}"
+                    sh "docker network create ${DOCKER_NETWORK}"
+                }
             }
         }
-        stage("Test Application") {
-            steps{
-                sh "docker run -d -p 8085:8085 --name inventory_app ${DOCKER_IMAGE}:${DOCKER_TAG}"
-                echo "run pytest (how to do that???)"
+
+        stage('Build Images') {
+            parallel {
+                stage('Build Application Image') {
+                    steps {
+                        script {
+                            echo "Building application Docker image: ${APP_IMAGE_NAME}:${APP_IMAGE_TAG}"
+                            dir('backend') {
+                                sh "docker build -t ${APP_IMAGE_NAME}:${APP_IMAGE_TAG} ."
+                            }
+                        }
+                    }
+                }
+
+                stage('Build Test Image') {
+                    steps {
+                        script {
+                            echo "Building application Docker image: ${TEST_IMAGE_NAME}:${TEST_IMAGE_TAG}"
+                            dir('backend') {
+                                dir('tests') {
+                                    sh "cat Dockerfile"  // temp
+                                    sh "docker build -t ${TEST_IMAGE_NAME}:${TEST_IMAGE_TAG} ."
+                                }
+                            }
+                        }
+                    }
+                }
+
+                stage('Run Database Container') {
+                    steps {
+                        script {
+                            echo "Running database container: ${DB_CONTAINER_NAME} on network ${DOCKER_NETWORK}"
+                            sh "docker run -d --name ${DB_CONTAINER_NAME} --network ${DOCKER_NETWORK} " +
+                               "-e POSTGRES_USER=${DB_USER} " +
+                               "-e POSTGRES_PASSWORD=${DB_PASSWORD} " +
+                               "-e POSTGRES_DB=${DB_NAME} " +
+                               "-p ${DB_PORT}:${DB_PORT} " +
+                               "${DB_IMAGE_NAME}"
+                        }
+                    }
+                }
             }
-            post{
-                always {
-                    echo "testing: done"
-                    sh 'docker rm -f inventory_app'
+        }
+
+
+        stage('Run Application Container') {
+            steps {
+                script {
+                    echo "Running application container: ${APP_CONTAINER_NAME} on network ${DOCKER_NETWORK}"
+                    sh "docker run -d --name ${APP_CONTAINER_NAME} --network ${DOCKER_NETWORK} " +
+                       "-e PORT=${APP_PORT} " +
+                       "-e POSTGRES_HOST=${DB_HOST} " +
+                       "-e POSTGRES_PORT=${DB_PORT} " +
+                       "-e POSTGRES_USER=${DB_USER} " +
+                       "-e POSTGRES_PASSWORD=${DB_PASSWORD} " +
+                       "-e POSTGRES_DB=${DB_NAME} " +
+                       "-p ${APP_PORT}:${APP_PORT} " +
+                       "${APP_IMAGE_NAME}:${APP_IMAGE_TAG}"
+                }
+            }
+        }
+
+        stage('Wait for Health Check') {
+            steps {
+                script {
+                    def maxAttempts = 20
+                    def delaySeconds = 3
+                    def success = false
+
+                    echo "Verifying containers are running..."
+                    sh "docker ps -f name=${APP_CONTAINER_NAME}"
+                    sh "docker ps -f name=${DB_CONTAINER_NAME}"
+                    echo "Containers should be running and connected to ${DOCKER_NETWORK}."
+
+                    for (int i = 0; i < maxAttempts; i++) {
+                        try {
+                            sh "docker logs \$(docker ps -f name=${APP_CONTAINER_NAME} -q) "
+
+                            def response = sh(script: "curl -s -o /dev/null -w '%{http_code}' http://localhost:8085/health", returnStdout: true).trim()
+                            if (response == '200') {
+                                echo "Health check successful! Service is up and running."
+                                success = true
+                                break
+                            } else {
+                                echo "Health check returned status code: ${response}. Retrying in ${delaySeconds} seconds..."
+                            }
+                        } catch (Exception e) {
+                            echo "Error during health check: ${e.getMessage()}. Retrying in ${delaySeconds} seconds..."
+                        }
+                        sleep delaySeconds
+                    }
+
+                    if (!success) {
+                        error "Health check failed after 60 seconds. Service did not become available."
+                    }
+                }
+            }
+        }
+
+        stage('Run Test Container') {
+            steps {
+                script {
+                    echo "Running test container: ${TEST_CONTAINER_NAME} on network ${DOCKER_NETWORK}"
+                    sh "docker run --rm --name ${TEST_CONTAINER_NAME} --network ${DOCKER_NETWORK} " +
+                       "${TEST_IMAGE_NAME}:${TEST_IMAGE_TAG} " +
+                       "/bin/bash -c \"pytest ./test_inventory_app.py --base-url http://${APP_CONTAINER_NAME}:${APP_PORT} --db-empty\""
                 }
             }
         }
@@ -60,17 +196,33 @@ pipeline {
                     stage("Build multi-arch image") {
                         // Step 2: Build the multi-architecture image
                         sh '''
-                            echo "Building multi-architecture image: ${DOCKER_IMAGE}:${DOCKER_BUILD_TAG} for linux/amd64,linux/arm64/v8"
+                            echo "Building multi-architecture image: ${APP_IMAGE_NAME}:${APP_IMAGE_BUILD_TAG} for linux/amd64,linux/arm64/v8"
                             docker buildx build \\
                                 --platform linux/amd64,linux/arm64/v8 \\
-                                -t ${DOCKER_IMAGE}:${DOCKER_BUILD_TAG} \\
-                                -t ${DOCKER_IMAGE}:${DOCKER_TAG} \\
+                                -t ${APP_IMAGE_NAME}:${APP_IMAGE_BUILD_TAG} \\
+                                -t ${APP_IMAGE_NAME}:${APP_IMAGE_TAG} \\
                                 --push \\
                                 ./backend/
                         '''
                         echo "Successfully built and pushed multi-architecture image."
                     }
                 }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                echo "Post-build cleanup: Stopping and removing containers and network..."
+                sh "docker stop ${TEST_CONTAINER_NAME} || true"
+                sh "docker rm -f ${TEST_CONTAINER_NAME} || true"
+                sh "docker stop ${APP_CONTAINER_NAME} || true"
+                sh "docker rm -f ${APP_CONTAINER_NAME} || true"
+                sh "docker stop ${DB_CONTAINER_NAME} || true"
+                sh "docker rm -f ${DB_CONTAINER_NAME} || true"
+                sh "docker network rm ${DOCKER_NETWORK} || true"
+                echo "Post-build cleanup complete."
             }
         }
     }
