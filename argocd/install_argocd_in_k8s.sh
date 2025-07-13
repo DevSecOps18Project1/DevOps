@@ -6,7 +6,16 @@ ARGO_CD_PORT="${ARGO_CD_PORT:-$DEFAULT_PORT}"
 kubectl create namespace argocd
 kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
 
-# kubectl get pods -n argocd
+# Wait for argocd-server pods to be ready
+echo "Waiting for argocd-server pods to be ready..."
+while true; do
+    PODS_READY=$(kubectl get pods -n argocd -l app.kubernetes.io/name=argocd-server -o 'jsonpath={..status.conditions[?(@.type=="Ready")].status}' | tr ' ' '\n' | sort | uniq)
+    if [ "$PODS_READY" = "True" ]; then
+        break
+    fi
+    sleep 5
+done
+echo "argocd-server pods are ready."
 
 echo ""
 echo "*** Login detail ***"
