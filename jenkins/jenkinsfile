@@ -163,7 +163,7 @@ pipeline {
                     echo "Running test container: ${TEST_CONTAINER_NAME} on network ${DOCKER_NETWORK}"
                     sh "docker run --rm --name ${TEST_CONTAINER_NAME} --network ${DOCKER_NETWORK} " +
                        "${TEST_IMAGE_NAME}:${TEST_IMAGE_TAG} " +
-                       "/bin/bash -c \"pytest ./test_inventory_app.py --base-url http://${APP_CONTAINER_NAME}:${APP_PORT} --db-empty\""
+                       "/bin/bash -c \"pytest ./test_inventory_app.py --base-url ${TEST_BASE_URL} --db-empty\""
                 }
             }
         }
