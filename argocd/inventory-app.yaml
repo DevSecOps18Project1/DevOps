@@ -16,6 +16,9 @@ spec:
     path: prometheus/k8s
     targetRevision: main
   - repoURL: https://github.com/DevSecOps18Project1/microservices.git
+    path: node-exporter/k8s
+    targetRevision: main
+  - repoURL: https://github.com/DevSecOps18Project1/microservices.git
     path: grafana/k8s
     targetRevision: main
   destination:
