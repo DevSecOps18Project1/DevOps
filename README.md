@@ -10,6 +10,11 @@ The CD was implemented with Argo CD.
 
 ![The CI-CD Flow](images/ci-cd-flow.png)
 
+## Minikube
+
+We used minikube as a local cluster for development. More details about installation and configuration see in
+[minikube](minikube/README.md) directory
+
 ## Jenkins
 
 More details about our implementation for the CI with Jenkins see in
