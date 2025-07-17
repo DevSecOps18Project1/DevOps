@@ -23,7 +23,8 @@ pipeline {
         TEST_CONTAINER_NAME = "inventory-test"
         TEST_BASE_URL = "http://${APP_CONTAINER_NAME}:${APP_PORT}"
 
-        GIT_REPO = 'https://github.com/DevSecOps18Project1/microservices.git'
+        GIT_REPO_NAME = 'github.com/DevSecOps18Project1/microservices.git'
+        K8S_DEPLOYMENT_FILE = "backend/k8s/k8s-flask-deployment.yaml"
     }
 
     stages {
@@ -45,8 +46,13 @@ pipeline {
 
         stage('Checkout SCM') {
             steps {
+                cleanWs()
+
                 echo "Cloning the microservices"
-                git branch: 'main', url: "${GIT_REPO}"
+                withCredentials([usernamePassword(credentialsId: 'yakinew_github_jenkins', usernameVariable: 'GIT_USERNAME', passwordVariable: 'GIT_PASSWORD')]) {
+                    git branch: 'main', url: "https://${GIT_USERNAME}:${GIT_PASSWORD}@${GIT_REPO_NAME}"
+                    sh "ls -l"
+                }
             }
         }
 
@@ -206,6 +212,28 @@ pipeline {
                         '''
                         echo "Successfully built and pushed multi-architecture image."
                     }
+                }
+            }
+        }
+
+        stage("Update App Deploy Version") {
+            steps {
+                script {
+                    sh '''
+                        echo """[user]
+                            email = yaakov@yahoo.com
+                            name = Yaakov Neuman (Jenkins)""" | cat >> .git/config
+                        '''
+
+                    sh "ls -l"
+                    sh "cat ${K8S_DEPLOYMENT_FILE}"
+                    sh "sed -i 's|yakinew/inventory-app:.*|yakinew/inventory-app:${APP_IMAGE_BUILD_TAG}|g' ${K8S_DEPLOYMENT_FILE}"
+                    sh "cat ${K8S_DEPLOYMENT_FILE}"
+
+                    sh "git add ${K8S_DEPLOYMENT_FILE}"
+                    sh '''git commit -m "[ci skip] Update flask-app image to version ${APP_IMAGE_BUILD_TAG}"'''
+                    sh "git log | head -n 30"
+                    sh "git push origin main"
                 }
             }
         }
